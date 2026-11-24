@@ -43,9 +43,25 @@ export class GitHubSource {
     }
     return res;
   }
-  async list(path) {
+  // 接続診断：どこで失敗しているかを具体的に返す
+  async diagnose() {
+    const h = { Authorization: `Bearer ${this.token}`, Accept: "application/vnd.github+json" };
+    const r1 = await fetch(`https://api.github.com/repos/${this.repo}`, { headers: h, cache: "no-store" });
+    if (r1.status === 401) return "token が無効です（コピーミスか，削除・期限切れ）";
+    if (r1.status === 404) return `token から ${this.repo} が見えません．token の Repository access で「Only select repositories」→ ${this.repo.split("/")[1]} を選んでいるか，リポジトリ名が正しいか確認してください`;
+    if (!r1.ok) return `リポジトリ情報の取得に失敗（${r1.status}）`;
+    const r2 = await fetch(this.url("papers"), { headers: h, cache: "no-store" });
+    if (r2.status === 403 || r2.status === 404) {
+      const r3 = await fetch(this.url(""), { headers: h, cache: "no-store" });
+      if (!r3.ok) return "リポジトリは見えますが中身を読めません．token の Permissions に Contents（Read and write）を追加してください";
+      return `ブランチ ${this.branch} に papers/ がありません`;
+    }
+    if (!r2.ok) return `papers/ の取得に失敗（${r2.status}）`;
+    return null;
+  }
+  async list(path, { allowMissing = false } = {}) {
     const res = await this.req(path).catch((e) => {
-      if (String(e.message).startsWith("見つかりません")) return null;
+      if (allowMissing && String(e.message).startsWith("見つかりません")) return null;
       throw e;
     });
     if (!res) return [];
@@ -77,6 +93,7 @@ export class LocalSource {
     return res;
   }
   q(path) { return encodeURIComponent(path); }
+  async diagnose() { return null; }
   async list(path) { return (await this.req(`api/list?path=${this.q(path)}`)).json(); }
   async readText(path) {
     const res = await this.req(`api/file?path=${this.q(path)}`);

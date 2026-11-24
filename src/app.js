@@ -71,6 +71,8 @@ async function start() {
   state.src = makeSource(state.cfg);
   if (!state.src) { openSettings(); return; }
   try {
+    const problem = await state.src.diagnose();
+    if (problem) { showError(`接続できません：${problem}`); return; }
     const dirs = (await state.src.list("papers")).filter((x) => x.type === "dir");
     state.papers = [];
     for (const d of dirs) {
@@ -79,7 +81,7 @@ async function start() {
         state.papers.push({ id: d.name, ...JSON.parse(text) });
       } catch { state.papers.push({ id: d.name, short: d.name }); }
     }
-    if (!state.papers.length) { toast("papers/ に論文がありません"); return; }
+    if (!state.papers.length) { showError("papers/ に論文がありません"); return; }
     const sel = $("#paper");
     sel.innerHTML = state.papers.map((p) => `<option value="${esc(p.id)}">${esc(p.short || p.title || p.id)}</option>`).join("");
     let last = null;
@@ -111,7 +113,7 @@ $("#paper").onchange = (e) => openPaper(e.target.value).catch((err) => showError
 
 async function loadThreads() {
   const dir = `papers/${state.paperId}/threads`;
-  const files = (await state.src.list(dir)).filter((f) => f.type === "file" && /^\d+\.md$/.test(f.name));
+  const files = (await state.src.list(dir, { allowMissing: true })).filter((f) => f.type === "file" && /^\d+\.md$/.test(f.name));
   const out = new Map();
   // 同時接続を抑えて取得
   const queue = [...files];
@@ -306,6 +308,7 @@ document.addEventListener("click", async (e) => {
 
 // ---------- 投稿 ----------
 function openNew({ parent = null, anchor = null } = {}) {
+  if (!state.paperId) { showError("論文が読み込まれていません．先に接続を確認してください（⚙）"); return; }
   state.draft = { parent, anchor };
   const f = $("#new-form");
   f.reset();
