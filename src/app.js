@@ -25,6 +25,17 @@ function toast(msg, ms = 2500) {
   toastTimer = setTimeout(() => t.classList.remove("show"), ms);
 }
 
+// 失敗は消えない帯で表示する（スマホでは開発者ツールが見られないため）
+function showError(msg) {
+  const e = $("#err");
+  e.querySelector("span").textContent = msg;
+  e.hidden = false;
+  $("#toast").classList.remove("show");
+}
+$("#err button").onclick = () => ($("#err").hidden = true);
+window.addEventListener("unhandledrejection", (e) => showError(`エラー：${e.reason?.message || e.reason}`));
+window.addEventListener("error", (e) => showError(`エラー：${e.message}`));
+
 const pdf = new PdfView($("#pdf"), { onBadge: (n) => { state.pageFilter = n; showTab("threads"); closeDetail(false); renderList(); } });
 
 // ---------- 設定 ----------
@@ -78,7 +89,7 @@ async function start() {
     await openPaper(id);
   } catch (e) {
     console.error(e);
-    toast(`読み込み失敗：${e.message}`, 5000);
+    showError(`読み込み失敗：${e.message}`);
   }
 }
 
@@ -89,12 +100,14 @@ async function openPaper(id) {
   closeDetail(false);
   try { localStorage.setItem(LAST_KEY, id); } catch {}
   toast("読み込み中…", 10000);
+  $("#err").hidden = true;
   const [buf] = await Promise.all([state.src.readBinary(`papers/${id}/paper.pdf`), loadThreads()]);
-  await pdf.load(buf);
+  try { await pdf.load(buf); }
+  catch (e) { throw new Error(`PDFを表示できません（${e.message}）`); }
   refreshBadges();
   toast("読み込み完了", 1200);
 }
-$("#paper").onchange = (e) => openPaper(e.target.value);
+$("#paper").onchange = (e) => openPaper(e.target.value).catch((err) => showError(`読み込み失敗：${err.message}`));
 
 async function loadThreads() {
   const dir = `papers/${state.paperId}/threads`;
@@ -119,7 +132,7 @@ async function loadThreads() {
 async function reload() {
   if (!state.src || !state.paperId) return start();
   try { await loadThreads(); refreshBadges(); toast("更新しました", 1200); }
-  catch (e) { toast(`更新失敗：${e.message}`, 4000); }
+  catch (e) { showError(`更新失敗：${e.message}`); }
 }
 $("#reload").onclick = reload;
 // Claude アプリから戻ってきたときに自動更新

@@ -135,3 +135,11 @@ dialog input, dialog textarea, dialog select { padding: 8px; border: 1px solid v
   #zoom { right: calc(42% + 12px); bottom: 16px; }
   body:has(#threads-pane.on) #zoom { display: flex; }
 }
+
+#err {
+  position: fixed; left: 8px; right: 8px; top: calc(var(--head) + 8px); z-index: 40;
+  display: flex; gap: 8px; align-items: flex-start; background: #fef2f2; color: #991b1b;
+  border: 1px solid #fecaca; border-radius: 10px; padding: 8px 10px; font-size: 13px; overflow-wrap: anywhere;
+}
+#err span { flex: 1; }
+#err button { border: 0; background: transparent; color: inherit; padding: 0 4px; }
