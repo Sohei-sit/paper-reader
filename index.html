@@ -25,12 +25,28 @@
 
 <main>
   <section id="pdf-pane" class="pane on"><div id="pdf"></div></section>
-  <div id="zoom"><button data-z="-1" aria-label="縮小">−</button><span id="zoom-v">100%</span><button data-z="1" aria-label="拡大">＋</button></div>
+  <div id="pdfbar">
+    <button id="back-thread" class="pill accent" hidden>← スレッドへ</button>
+    <div class="pill">
+      <button id="page-ind" aria-label="ページへ移動">p.<span id="page-cur">1</span>/<span id="page-all">-</span></button>
+      <span class="sep"></span>
+      <button data-z="-1" aria-label="縮小">−</button><button id="zoom-v" aria-label="100%に戻す">100%</button><button data-z="1" aria-label="拡大">＋</button>
+    </div>
+  </div>
 
   <section id="threads-pane" class="pane">
     <div id="list-view">
       <div class="toolbar">
-        <input id="search" type="search" placeholder="スレッドを検索">
+        <div class="row2">
+          <input id="search" type="search" placeholder="スレッドを検索">
+          <select id="sort" aria-label="並べ替え">
+            <option value="tree">派生ツリー</option>
+            <option value="paper">論文の順</option>
+            <option value="updated">最近の更新</option>
+            <option value="newest">新しい順</option>
+            <option value="oldest">古い順</option>
+          </select>
+        </div>
         <div class="filters">
           <button data-filter="all" class="on">すべて</button>
           <button data-filter="open">未回答</button>

@@ -14,6 +14,7 @@ const state = {
   threads: new Map(), // id -> {id, path, sha, raw, meta, sections, open}
   filter: "all", pageFilter: null, query: "", detail: null, tab: "pdf",
   draft: null, // 新規質問の {anchor, parent}
+  sort: "tree", returnTo: null, followDrafts: new Map(),
 };
 
 let toastTimer;
@@ -38,15 +39,38 @@ window.addEventListener("error", (e) => showError(`エラー：${e.message}`));
 
 const pdf = new PdfView($("#pdf"), {
   onBadge: (n) => { state.pageFilter = n; showTab("threads"); closeDetail(false); renderList(); },
-  onZoom: (z) => ($("#zoom-v").textContent = `${Math.round(z * 100)}%`),
+  onZoom: (z) => { $("#zoom-v").textContent = `${Math.round(z * 100)}%`; wakeBar(); },
+  onPage: (n, all) => { $("#page-cur").textContent = n; $("#page-all").textContent = all; wakeBar(); savePos(); },
 });
+
+// PDF 下部のバー：操作がないと薄くする
+let barTimer;
+function wakeBar() {
+  $("#pdfbar").classList.remove("idle");
+  clearTimeout(barTimer);
+  barTimer = setTimeout(() => $("#pdfbar").classList.add("idle"), 2500);
+}
+// 読んでいた位置を論文ごとに保存
+let posTimer;
+function savePos() {
+  clearTimeout(posTimer);
+  posTimer = setTimeout(() => {
+    const pos = pdf.position();
+    if (pos && state.paperId) try { localStorage.setItem(`paper-reader.pos.${state.paperId}`, JSON.stringify(pos)); } catch {}
+  }, 500);
+}
 
 // ---------- 表示設定（端末ごと） ----------
 const UI_KEY = "paper-reader.ui";
 function loadUi() {
-  try { return { menu: "bottom", ...JSON.parse(localStorage.getItem(UI_KEY)) }; } catch { return { menu: "bottom" }; }
+  try { return { menu: "bottom", sort: "tree", ...JSON.parse(localStorage.getItem(UI_KEY)) }; } catch { return { menu: "bottom", sort: "tree" }; }
 }
 function applyUi(ui) { document.documentElement.className = `menu-${ui.menu}`; }
+function saveUi(patch) {
+  const ui = { ...loadUi(), ...patch };
+  try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch {}
+  return ui;
+}
 
 // ---------- 設定 ----------
 function loadCfg() {
@@ -71,9 +95,7 @@ function openSettings() {
 $("#settings-dlg").addEventListener("close", async () => {
   if ($("#settings-dlg").returnValue !== "ok") return;
   const f = $("#settings-form");
-  const ui = { ...loadUi(), menu: f.menu.value };
-  try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch {}
-  applyUi(ui);
+  applyUi(saveUi({ menu: f.menu.value }));
   const next = { mode: f.mode.value, repo: f.repo.value.trim(), branch: f.branch.value.trim() || "main", token: f.token.value.trim() };
   const key = (c) => (c?.mode === "github" ? JSON.stringify([c.mode, c.repo, c.branch, c.token]) : c?.mode);
   const changed = key(next) !== key(state.cfg);
@@ -123,6 +145,7 @@ async function openPaper(id) {
   const [buf] = await Promise.all([state.src.readBinary(`papers/${id}/paper.pdf`), loadThreads()]);
   try { await pdf.load(buf); }
   catch (e) { throw new Error(`PDFを表示できません（${e.message}）`); }
+  try { pdf.restore(JSON.parse(localStorage.getItem(`paper-reader.pos.${id}`))); } catch {}
   refreshBadges();
   toast("読み込み完了", 1200);
 }
@@ -176,15 +199,41 @@ function showTab(tab) {
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   $("#pdf-pane").classList.toggle("on", tab === "pdf");
   $("#threads-pane").classList.toggle("on", tab === "threads");
+  if (tab === "threads") $("#back-thread").hidden = true;
   if (tab === "pdf") pdf.relayout();
 }
 document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 const isWide = () => matchMedia("(min-width: 900px)").matches;
 
 // ---------- 一覧 ----------
+const byId = (a, b) => a.id.localeCompare(b.id, undefined, { numeric: true });
 function sortedThreads() {
-  return [...state.threads.values()].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+  return [...state.threads.values()].sort(byId);
 }
+const lastStamp = (t) => t.sections.length ? t.sections[t.sections.length - 1].stamp : String(t.meta.created || "");
+// 論文の順：根拠箇所（なければ回答の最初の引用）のページと，ページ内の位置で並べる
+function anchorOf(t) {
+  if (t.meta.anchor_page) return { page: Number(t.meta.anchor_page), quote: t.meta.anchor_quote || "" };
+  const m = t.raw.match(/\[\[p\.(\d+)\s*\|\s*([\s\S]+?)\]\]/);
+  return m ? { page: Number(m[1]), quote: m[2] } : null;
+}
+async function ensureOrder() {
+  const todo = [...state.threads.values()].filter((t) => t.order === undefined);
+  if (!todo.length || !pdf.pages.length) return false;
+  await Promise.all(todo.map(async (t) => {
+    const a = anchorOf(t);
+    t.order = a ? [a.page, await pdf.quoteOrder(a.page, a.quote)] : [1e9, 0];
+  }));
+  return true;
+}
+function sortThreads(list) {
+  const mode = state.sort;
+  if (mode === "paper") return list.sort((a, b) => (a.order?.[0] ?? 1e9) - (b.order?.[0] ?? 1e9) || (a.order?.[1] ?? 0) - (b.order?.[1] ?? 0) || byId(a, b));
+  if (mode === "newest") return list.sort((a, b) => byId(b, a));
+  if (mode === "updated") return list.sort((a, b) => lastStamp(b).localeCompare(lastStamp(a)) || byId(b, a));
+  return list.sort(byId);
+}
+const plain = (s) => s.replace(/\[\[p\.(\d+)\s*\|[\s\S]+?\]\]/g, "(p.$1)").replace(/\[(事実|推論|不明)\]/g, "").replace(/[#*`>_]/g, "").replace(/\s+/g, " ").trim();
 function matches(t) {
   if (state.filter === "open" && !t.open) return false;
   if (state.filter === "answered" && t.open) return false;
@@ -198,21 +247,24 @@ function matches(t) {
 }
 function itemHTML(t) {
   const qn = t.sections.filter((s) => s.kind === "Q").length;
+  const last = t.sections[t.sections.length - 1];
   const anchor = t.meta.anchor_page ? ` ・ p.${esc(t.meta.anchor_page)}` : "";
   return `<button class="titem" data-id="${esc(t.id)}">
     <div class="t"><span class="st ${t.open ? "open" : "answered"}">${t.open ? "未回答" : "回答済"}</span>${esc(t.meta.title || "(無題)")}</div>
-    <div class="m">#${esc(t.id)}${anchor} ・ 質問 ${qn} ・ ${esc(String(t.meta.created || "").replace("T", " "))}</div>
+    <div class="m">#${esc(t.id)}${anchor} ・ 質問 ${qn} ・ ${esc(lastStamp(t).replace("T", " "))}</div>
+    ${last ? `<div class="pv">${last.kind === "A" ? "回答：" : "質問："}${esc(plain(last.body).slice(0, 80))}</div>` : ""}
   </button>`;
 }
 function renderList() {
+  if (state.sort === "paper") ensureOrder().then((changed) => changed && renderList());
   const all = sortedThreads();
-  const filtered = state.filter !== "all" || state.pageFilter || state.query;
+  const filtered = state.filter !== "all" || state.pageFilter || state.query || state.sort !== "tree";
   const pf = $("#page-filter");
   pf.hidden = !state.pageFilter;
   pf.textContent = `p.${state.pageFilter} ✕`;
   let html;
   if (filtered) {
-    const list = all.filter(matches);
+    const list = sortThreads(all.filter(matches));
     html = list.length ? `<ul>${list.map((t) => `<li>${itemHTML(t)}</li>`).join("")}</ul>` : "";
   } else {
     const kids = new Map();
@@ -240,6 +292,7 @@ document.querySelectorAll(".filters [data-filter]").forEach((b) => (b.onclick = 
 }));
 $("#page-filter").onclick = () => { state.pageFilter = null; renderList(); };
 $("#search").oninput = (e) => { state.query = e.target.value.trim(); renderList(); };
+$("#sort").onchange = (e) => { state.sort = e.target.value; saveUi({ sort: state.sort }); renderList(); };
 
 // ---------- 詳細 ----------
 function renderMarkdown(md) {
@@ -297,7 +350,7 @@ function renderDetail(id) {
     ${t.open ? `<p class="note">回答待ちです．「Claude に回答を頼む」で依頼文をコピーできます．</p>` : ""}
     ${children.length ? `<div class="children"><div class="note">派生スレッド</div>${children.map(itemHTML).join("")}</div>` : ""}
     <div class="reply">
-      <textarea id="followup" rows="3" placeholder="このスレッドで追加の質問"></textarea>
+      <textarea id="followup" rows="3" placeholder="このスレッドで追加の質問">${esc(state.followDrafts.get(t.id) || "")}</textarea>
       <div class="actions">
         <button id="followup-send" class="primary">追加で質問</button>
         <button id="derive">派生スレッドを作る</button>
@@ -308,6 +361,7 @@ function renderDetail(id) {
   v.querySelectorAll("[data-goto]").forEach((b) => (b.onclick = () => openDetail(b.dataset.goto)));
   v.querySelectorAll(".titem").forEach((b) => (b.onclick = () => openDetail(b.dataset.id)));
   v.querySelector("#followup-send").onclick = () => sendFollowup(t.id);
+  v.querySelector("#followup").oninput = (e) => state.followDrafts.set(t.id, e.target.value);
   v.querySelector("#derive").onclick = () => openNew({ parent: t.id, anchor: pdf.selection() || lastSel });
   v.querySelector("#ask-btn2")?.addEventListener("click", askClaude);
 }
@@ -318,7 +372,11 @@ document.addEventListener("click", async (e) => {
   if (!b) return;
   const page = Number(b.dataset.page);
   const quote = decodeURIComponent(b.dataset.quote || "");
-  if (!isWide()) showTab("pdf");
+  if (!isWide()) {
+    state.returnTo = b.closest("#detail-view") ? state.detail : null;
+    $("#back-thread").hidden = !state.returnTo;
+    showTab("pdf");
+  }
   const ok = await pdf.jumpTo(page, quote);
   if (!ok && quote) toast(`p.${page} で引用位置を特定できませんでした`, 3000);
 });
@@ -336,10 +394,13 @@ function openNew({ parent = null, anchor = null } = {}) {
   const p = $("#new-parent");
   p.hidden = !parent;
   if (parent) p.textContent = `派生元：#${parent} ${state.threads.get(parent)?.meta.title || ""}`;
+  try { f.q.value = localStorage.getItem("paper-reader.draft") || ""; } catch {}
   $("#new-dlg").showModal();
   f.q.focus();
 }
 $("#new-btn").onclick = () => openNew({ anchor: null });
+// 書きかけの質問は消えないように保存（投稿したら消す）
+$("#new-form").q.addEventListener("input", (e) => { try { localStorage.setItem("paper-reader.draft", e.target.value); } catch {} });
 
 $("#new-dlg").addEventListener("close", async () => {
   if ($("#new-dlg").returnValue !== "ok") return;
@@ -358,6 +419,7 @@ $("#new-dlg").addEventListener("close", async () => {
   try {
     toast("投稿中…", 10000);
     const { sha } = await state.src.writeText(path, text, null, `question: ${state.paperId} #${id}`);
+    try { localStorage.removeItem("paper-reader.draft"); } catch {}
     state.threads.set(id, { id, path, sha, raw: text, ...parseThread(text) });
     hideSelbar();
     renderList();
@@ -389,7 +451,8 @@ async function sendFollowup(id) {
       const latest = await state.src.readText(t.path); // 回答が先に入っていた場合は最新に追記
       r = await write(latest.text, latest.sha);
     }
-    state.threads.set(id, { ...t, raw: r.text, sha: r.sha, ...parseThread(r.text) });
+    state.threads.set(id, { ...t, raw: r.text, sha: r.sha, ...parseThread(r.text), order: undefined });
+    state.followDrafts.delete(id);
     renderDetail(id);
     renderList();
     refreshBadges();
@@ -424,13 +487,27 @@ $("#sel-ask").onclick = () => {
   openNew({ anchor: s });
 };
 
+$("#back-thread").onclick = () => {
+  $("#back-thread").hidden = true;
+  showTab("threads");
+  if (state.returnTo && state.detail !== state.returnTo) openDetail(state.returnTo);
+};
+$("#page-ind").onclick = () => {
+  const v = prompt(`ページ番号（1〜${pdf.pages.length}）`, pdf.currentPage());
+  if (v && Number(v)) pdf.goToPage(Number(v));
+};
+$("#zoom-v").onclick = () => pdf.setZoom(1);
+
 // ---------- 拡大縮小 ----------
-document.querySelectorAll("#zoom [data-z]").forEach((b) => (b.onclick = () => {
+document.querySelectorAll("#pdfbar [data-z]").forEach((b) => (b.onclick = () => {
   pdf.setZoom(pdf.zoom * (Number(b.dataset.z) > 0 ? 1.25 : 0.8));
+  wakeBar();
 }));
 
 // ---------- 起動 ----------
 state.cfg = loadCfg();
+state.sort = loadUi().sort;
+$("#sort").value = state.sort;
 if (!state.cfg && (location.hostname === "localhost" || location.hostname === "127.0.0.1")) state.cfg = { mode: "local" };
 history.replaceState({}, "", location.pathname + location.search);
 start();
