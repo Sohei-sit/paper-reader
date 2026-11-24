@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Paper Reader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <select id="paper" aria-label="論文"></select>
+  <nav class="tabs">
+    <button data-tab="pdf" class="on">PDF</button>
+    <button data-tab="threads">スレッド<span id="open-count" class="count" hidden></span></button>
+  </nav>
+  <button id="reload" class="icon" title="再読込" aria-label="再読込">↻</button>
+  <button id="settings-btn" class="icon" title="設定" aria-label="設定">⚙</button>
+</header>
+
+<main>
+  <section id="pdf-pane" class="pane on"><div id="pdf"></div></section>
+  <div id="zoom"><button data-z="-1" aria-label="縮小">−</button><span id="zoom-v">100%</span><button data-z="1" aria-label="拡大">＋</button></div>
+
+  <section id="threads-pane" class="pane">
+    <div id="list-view">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="スレッドを検索">
+        <div class="filters">
+          <button data-filter="all" class="on">すべて</button>
+          <button data-filter="open">未回答</button>
+          <button data-filter="answered">回答済み</button>
+          <button id="page-filter" class="on" hidden></button>
+        </div>
+        <div class="actions">
+          <button id="new-btn" class="primary">＋ 新しい質問</button>
+          <button id="ask-btn">Claude に回答を頼む</button>
+        </div>
+      </div>
+      <div id="tree"></div>
+    </div>
+    <div id="detail-view" hidden></div>
+  </section>
+</main>
+
+<div id="selbar" hidden>
+  <span id="sel-text"></span>
+  <button id="sel-ask" class="primary">選択箇所で質問</button>
+</div>
+
+<dialog id="new-dlg">
+  <form method="dialog" id="new-form">
+    <h2>新しい質問</h2>
+    <div id="new-parent" class="note" hidden></div>
+    <div id="new-anchor" class="anchor" hidden></div>
+    <label>質問<textarea name="q" rows="6" required placeholder="疑問をそのまま書く"></textarea></label>
+    <label>タイトル（空なら質問の冒頭）<input name="title" maxlength="80"></label>
+    <div class="row">
+      <button value="cancel" formnovalidate>やめる</button>
+      <button value="ok" class="primary">投稿</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="settings-dlg">
+  <form method="dialog" id="settings-form">
+    <h2>設定</h2>
+    <label>接続先
+      <select name="mode"><option value="github">GitHub</option><option value="local">ローカル（dev_server.py）</option></select>
+    </label>
+    <label>データ用リポジトリ<input name="repo" placeholder="Sohei-sit/paper-reader-data"></label>
+    <label>ブランチ<input name="branch" placeholder="main"></label>
+    <label>Fine-grained token<input name="token" type="password" autocomplete="off" placeholder="github_pat_..."></label>
+    <p class="note">token はこの端末のブラウザにだけ保存されます．権限は「対象リポジトリを paper-reader-data のみ」「Contents: Read and write」にしてください．
+      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">token を作成</a></p>
+    <div class="row">
+      <button value="cancel" formnovalidate>閉じる</button>
+      <button value="ok" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status"></div>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
