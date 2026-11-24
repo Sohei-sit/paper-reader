@@ -36,7 +36,17 @@ $("#err button").onclick = () => ($("#err").hidden = true);
 window.addEventListener("unhandledrejection", (e) => showError(`エラー：${e.reason?.message || e.reason}`));
 window.addEventListener("error", (e) => showError(`エラー：${e.message}`));
 
-const pdf = new PdfView($("#pdf"), { onBadge: (n) => { state.pageFilter = n; showTab("threads"); closeDetail(false); renderList(); } });
+const pdf = new PdfView($("#pdf"), {
+  onBadge: (n) => { state.pageFilter = n; showTab("threads"); closeDetail(false); renderList(); },
+  onZoom: (z) => ($("#zoom-v").textContent = `${Math.round(z * 100)}%`),
+});
+
+// ---------- 表示設定（端末ごと） ----------
+const UI_KEY = "paper-reader.ui";
+function loadUi() {
+  try { return { menu: "bottom", ...JSON.parse(localStorage.getItem(UI_KEY)) }; } catch { return { menu: "bottom" }; }
+}
+function applyUi(ui) { document.documentElement.className = `menu-${ui.menu}`; }
 
 // ---------- 設定 ----------
 function loadCfg() {
@@ -55,14 +65,21 @@ function openSettings() {
   f.repo.value = c.repo || "Sohei-sit/paper-reader-data";
   f.branch.value = c.branch || "main";
   f.token.value = c.token || "";
+  f.menu.value = loadUi().menu;
   $("#settings-dlg").showModal();
 }
 $("#settings-dlg").addEventListener("close", async () => {
   if ($("#settings-dlg").returnValue !== "ok") return;
   const f = $("#settings-form");
-  state.cfg = { mode: f.mode.value, repo: f.repo.value.trim(), branch: f.branch.value.trim() || "main", token: f.token.value.trim() };
+  const ui = { ...loadUi(), menu: f.menu.value };
+  try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch {}
+  applyUi(ui);
+  const next = { mode: f.mode.value, repo: f.repo.value.trim(), branch: f.branch.value.trim() || "main", token: f.token.value.trim() };
+  const key = (c) => (c?.mode === "github" ? JSON.stringify([c.mode, c.repo, c.branch, c.token]) : c?.mode);
+  const changed = key(next) !== key(state.cfg);
+  state.cfg = next;
   try { localStorage.setItem(CFG_KEY, JSON.stringify(state.cfg)); } catch { toast("設定を保存できませんでした"); }
-  await start();
+  if (changed || !state.paperId) await start();
 });
 $("#settings-btn").onclick = openSettings;
 
@@ -409,8 +426,7 @@ $("#sel-ask").onclick = () => {
 
 // ---------- 拡大縮小 ----------
 document.querySelectorAll("#zoom [data-z]").forEach((b) => (b.onclick = () => {
-  const z = pdf.setZoom(pdf.zoom + Number(b.dataset.z) * 0.25);
-  $("#zoom-v").textContent = `${Math.round(z * 100)}%`;
+  pdf.setZoom(pdf.zoom * (Number(b.dataset.z) > 0 ? 1.25 : 0.8));
 }));
 
 // ---------- 起動 ----------
